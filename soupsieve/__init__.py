@@ -36,7 +36,7 @@ from typing import Any, Mapping, Iterator, Iterable, cast
 
 __all__ = (
     'DEBUG', 'NOCACHE', 'NOSTRICT', 'SelectorSyntaxError', 'CustomSelectors', 'SoupSieve',
-    'closest', 'compile', 'filter', 'iselect', 'match', 'select', 'select_one'
+    'closest', 'compile', 'filter', 'iselect', 'match', 'select', 'select_many', 'select_one'
 )
 
 SoupSieve = cm.SoupSieve
@@ -226,6 +226,96 @@ def iselect(
         max_selectors=max_selectors,
         **kwargs
     ).iselect(tag, limit)
+
+
+def select_many(
+    selects: Mapping[str, str | cm.SoupSieve] | Iterable[tuple[str, str | cm.SoupSieve]],
+    tag: bs4.Tag,
+    namespaces: dict[str, str] | None = None,
+    limits: Mapping[str, int] | None = None,
+    flags: int = 0,
+    *,
+    custom: Mapping[str, str | ct.SelectorList] | None = None,
+    ignore: Iterable[str] | None = None,
+    max_selectors: int = cp.SELECTOR_LIMIT,
+    **kwargs: Any
+) -> dict[str, list[bs4.Tag]]:
+    """
+    Select tags for many named selectors in a single document order traversal.
+
+    `selects` maps a rule name to a CSS selector string or a compiled `SoupSieve` object.
+    Compiled rules keep their own namespaces, custom selectors, and flags; string rules are
+    compiled with the shared `namespaces`, `custom`, `ignore`, `flags`, and `max_selectors`
+    arguments. `limits` optionally maps a rule name to a positive integer limit (0, the default,
+    means no limit); each rule stops collecting once its own limit is reached, and the traversal
+    stops as soon as every rule has reached its limit.
+
+    Returns a dictionary mapping each rule name to its matched tags, in document order.
+    A tag matching multiple rules appears in each of those rules' results, but never twice
+    within a single rule's results.
+
+    All rules are compiled before the traversal begins, so a compilation failure is reported
+    with the offending rule's name and no partial results are delivered.
+    """
+
+    items = list(selects.items()) if isinstance(selects, Mapping) else list(selects)
+
+    names: list[str] = []
+    patterns: list[str | cm.SoupSieve] = []
+    seen: set[str] = set()
+    for name, pattern in items:
+        if name in seen:
+            raise ValueError(f"Duplicate rule name {name!r}")
+        seen.add(name)
+        names.append(name)
+        patterns.append(pattern)
+
+    if limits is None:
+        limits = {}
+    else:
+        unknown = [name for name in limits if name not in seen]
+        if unknown:
+            raise ValueError(f"Limit specified for unknown rule {unknown[0]!r}")
+
+    # Compile every rule up front so that a failure is reported with its rule
+    # name before any node is visited and no partial results are delivered.
+    compiled: list[cm.SoupSieve] = []
+    for name, pattern in zip(names, patterns):
+        if isinstance(pattern, cm.SoupSieve):
+            # Compiled rules are self-contained and keep their own namespaces,
+            # custom selectors, and flags.
+            compiled.append(pattern)
+            continue
+        try:
+            compiled.append(compile(
+                pattern,
+                namespaces,
+                flags,
+                custom=custom,
+                ignore=ignore,
+                max_selectors=max_selectors,
+                **kwargs
+            ))
+        except SelectorSyntaxError as e:
+            raise SelectorSyntaxError(f"Rule {name!r}: {e}") from e
+
+    if not compiled:
+        return {}
+
+    # Combine flags (a `NOCACHE` rule disables structural caching for the shared
+    # traversal) and evaluate each rule with its own selectors and namespaces.
+    combined_flags = 0
+    rules: list[tuple[ct.SelectorList, ct.Namespaces | dict[str, str], int]] = []
+    for name, selector in zip(names, compiled):
+        combined_flags |= selector.flags
+        rules.append((
+            selector.selectors,
+            selector.namespaces if selector.namespaces is not None else {},
+            limits.get(name, 0)
+        ))
+
+    matcher = cm.CSSMatch(compiled[0].selectors, tag, None, combined_flags)
+    return dict(zip(names, matcher.select_many(rules)))
 
 
 def escape(ident: str) -> str:

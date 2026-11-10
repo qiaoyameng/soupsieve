@@ -151,6 +151,32 @@ def iselect(select, node, namespaces=None, limit=0, flags=0, **kwargs):
 
 `iselect` is exactly like `select` except that it returns a generator instead of a list.
 
+## `soupsieve.select_many()`
+
+```py
+def select_many(selects, tag, namespaces=None, limits=None, flags=0, **kwargs):
+    """Select tags for many named selectors in a single traversal."""
+```
+
+`select_many` selects tags for many named CSS selectors at once, walking the document a single time in document
+order instead of once per selector. `selects` maps a rule name to a CSS selector string or a compiled
+[`SoupSieve`](#soupsievecompile) object, and the result maps each rule name to its matched tags.
+
+Each rule is evaluated independently: a tag that matches multiple rules appears in each of those rules' results, but
+never twice within a single rule's results. Compiled rules keep their own [namespaces](#namespaces),
+[custom selectors](#custom-selectors), and `flags`; string rules are compiled with the shared `namespaces`, `custom`,
+`ignore`, `flags`, and `max_selectors` arguments. An optional `limits` dictionary maps a rule name to a positive
+integer limit (0, the default, means no limit); a rule stops collecting once its own limit is reached, and the
+traversal stops as soon as every rule has reached its limit.
+
+All rules are compiled before the traversal begins, so a compilation failure raises immediately, reports the
+offending rule's name, and delivers no partial results.
+
+```py play session="example1"
+import soupsieve as sv
+sv.select_many({'paragraphs': 'p', 'limited': 'p'}, soup, limits={'limited': 1})
+```
+
 ## `soupsieve.closest()`
 
 ```py

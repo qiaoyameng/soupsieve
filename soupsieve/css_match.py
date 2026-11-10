@@ -2068,6 +2068,54 @@ class CSSMatch(_DocumentNav):
                     if lim < 1:
                         break
 
+    def select_many(
+        self,
+        rules: Sequence[tuple[ct.SelectorList, ct.Namespaces | dict[str, str], int]]
+    ) -> list[list[bs4.Tag]]:
+        """
+        Match many independent rules against all tags under the targeted tag in a single traversal.
+
+        Each rule is a `(selectors, namespaces, limit)` tuple which is evaluated independently:
+        a tag may match any number of rules and is kept in each matching rule's results, but never
+        twice within the same rule's results. A rule stops collecting once its `limit` is reached
+        (`0` means no limit), and the traversal stops as soon as every rule has reached its limit.
+
+        The document order traversal and the structural caches are shared by all the rules.
+        The caches are keyed by element and selector identity, never by rule, so they are safe
+        to reuse across rules.
+        """
+
+        results: list[list[bs4.Tag]] = [[] for _ in rules]
+        if not rules:
+            return results
+
+        # Remaining matches allowed per rule; `None` means unlimited.
+        remaining: list[int | None] = [limit if limit > 0 else None for _, _, limit in rules]
+        active = len(rules)
+
+        saved_selectors = self.selectors
+        saved_namespaces = self.namespaces
+        try:
+            # Selecting from a `template` is how its contents are reached, but only for that `template`.
+            for child in self.get_tag_descendants(self.tag, template_contents=True):
+                for index, (selectors, namespaces, _) in enumerate(rules):
+                    if remaining[index] is not None and remaining[index] < 1:
+                        continue
+                    self.selectors = selectors
+                    self.namespaces = namespaces
+                    if self.match(child):
+                        results[index].append(child)
+                        if remaining[index] is not None:
+                            remaining[index] -= 1
+                            if remaining[index] < 1:
+                                active -= 1
+                if not active:
+                    break
+        finally:
+            self.selectors = saved_selectors
+            self.namespaces = saved_namespaces
+        return results
+
     def closest(self) -> bs4.Tag | None:
         """Match closest ancestor."""
 
