@@ -8,6 +8,7 @@ from . import bidi
 from . import util
 import re
 from . import css_types as ct
+from . import css_table as ctab
 import bs4
 from typing import (
     Generator,
@@ -39,6 +40,10 @@ REL_HAS_PARENT = ': '
 REL_HAS_CLOSE_PARENT = ':>'
 REL_HAS_SIBLING = ':~'
 REL_HAS_CLOSE_SIBLING = ':+'
+
+# Relationship for the column combinator (`||`), including the forward looking form used by `:has()`
+REL_COLUMN = '||'
+REL_HAS_COLUMN = ':||'
 
 # `bs4` imports this module while it is still initializing,
 # so these must only be evaluated when type checking.
@@ -626,6 +631,7 @@ class CSSMatch(_DocumentNav):
         self.tree_cache: dict[int, bs4.Tag] = {}
         self.select_cache: dict[int, bs4.Tag | None] = {}
         self.index_cache: dict[int, dict[int, int]] = {}
+        self.table_tracker = ctab.TableTracker()
 
         # Find the root element for the whole tree
         doc = scope
@@ -666,6 +672,7 @@ class CSSMatch(_DocumentNav):
         self.tree_cache.clear()
         self.select_cache.clear()
         self.index_cache.clear()
+        self.table_tracker.reset()
 
     def supports_namespaces(self) -> bool:
         """Check if namespaces are supported in the HTML type."""
@@ -1170,9 +1177,30 @@ class CSSMatch(_DocumentNav):
         """Match relationship to other elements."""
 
         sel = relation[0]
+        if sel is not ct.Null and sel.rel_type in (REL_COLUMN, REL_HAS_COLUMN):
+            return self.match_column(el, relation)
         if sel is not ct.Null and sel.rel_type is not None and sel.rel_type.startswith(':'):
             return self.match_future_relations(el, relation)
         return self.match_past_relations(el, relation)
+
+    def match_column(self, el: bs4.Tag, relation: ct.SelectorList) -> MatchGenerator:
+        """
+        Match the column combinator `||`.
+
+        A cell matches if a `col` element declaring one of its logical columns, or another cell
+        covering one of those columns, matches the relation selector. The nearest ancestor table
+        supplies the column map, so nested tables are isolated.
+        """
+
+        found = False
+        table_map = self.table_tracker.get_cell_map(el)
+        if table_map is None:
+            return found
+        for member in table_map.column_members(el):
+            if (yield member, relation):
+                found = True
+                break
+        return found
 
     def match_id(self, el: bs4.Tag, ids: tuple[str, ...]) -> bool:
         """Match element's ID."""
@@ -1252,6 +1280,24 @@ class CSSMatch(_DocumentNav):
             matched = False
             last = n.last
             key = None
+
+            # `:nth-col()` and `:nth-last-col()` index the logical columns a cell covers, not its siblings.
+            if n.column:
+                cell_map = self.table_tracker.get_cell_map(el)
+                columns = cell_map.get_columns(el) if cell_map is not None else ()
+                for column in columns:
+                    index = cell_map.column_count - column + 1 if last else column
+                    if n.a != 0:
+                        value = (index - n.b) / n.a
+                        if value.is_integer() and value >= 0:
+                            matched = True
+                            break
+                    elif index == n.b and n.b >= 1:
+                        matched = True
+                        break
+                if not matched:
+                    break
+                continue
 
             # Prepare the child iterator and get the starting, real index and the relative index
             if pkey is not None and parent:

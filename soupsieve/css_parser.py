@@ -130,6 +130,8 @@ PSEUDO_COMPLEX_NO_MATCH = {
 PSEUDO_SPECIAL = {
     ':dir',
     ':lang',
+    ':nth-col',
+    ':nth-last-col',
     ':nth-child',
     ':nth-last-child',
     ':nth-last-of-type',
@@ -173,8 +175,9 @@ ATTR = fr'(?:{WSC}*+(?P<cmp>[!~^|*$]?+=){WSC}*+(?P<value>{VALUE})(?:{WSC}*+(?P<c
 PAT_ID = fr'\#{IDENTIFIER}'
 # Classes (`.class`)
 PAT_CLASS = fr'\.{IDENTIFIER}'
-# Prefix:Tag (`prefix|tag`)
-PAT_TAG = fr'(?P<tag_ns>(?:{IDENTIFIER}|\*)?+\|)?+(?P<tag_name>{IDENTIFIER}|\*)'
+# Prefix:Tag (`prefix|tag`). The negative lookahead keeps the namespace pipe from consuming the
+# first pipe of a column combinator (`||`) when no tag name could follow it.
+PAT_TAG = fr'(?P<tag_ns>(?:{IDENTIFIER}|\*)?+\|(?!\|))?+(?P<tag_name>{IDENTIFIER}|\*)'
 # Attributes (`[attr]`, `[attr=value]`, etc.)
 PAT_ATTR = fr'\[{WSC}*+(?P<attr_ns>(?:{IDENTIFIER}|\*)?+\|(?!=))?+(?P<attr_name>{IDENTIFIER}){ATTR}{WSC}*+\]'
 # Pseudo class (`:pseudo-class`, `:pseudo-class(`)
@@ -201,6 +204,11 @@ PAT_PSEUDO_NTH_TYPE = fr'''
 (?P<pseudo_nth_type>{PAT_PSEUDO_CLASS_SPECIAL}
 (?P<nth_type>{NTH}|even|odd)){WSC}*+\)
 '''
+# Pseudo class `nth-col` (`:nth-col(an+b)`, `:nth-last-col(an+b)`)
+PAT_PSEUDO_NTH_COL = fr'''
+(?P<pseudo_nth_col>{PAT_PSEUDO_CLASS_SPECIAL}
+(?P<nth_col>{NTH}|even|odd)){WSC}*+\)
+'''
 # Pseudo class language (`:lang("*-de", en)`)
 PAT_PSEUDO_LANG = fr'{PAT_PSEUDO_CLASS_SPECIAL}(?P<values>{VALUE}(?:{WSC}*+,{WSC}*+{VALUE})*+){WSC}*+\)'
 # Pseudo class direction (`:dir(ltr)`)
@@ -213,6 +221,9 @@ PAT_COMBINE = fr'''
 '''
 # Extra: Contains (`:contains(text)`)
 PAT_PSEUDO_CONTAINS = fr'{PAT_PSEUDO_CLASS_SPECIAL}(?P<values>{VALUE}(?:{WSC}*+,{WSC}*+{VALUE})*+){WSC}*+\)'
+# Column combinator (`||`). Leading whitespace or comments are absorbed so that the whitespace
+# separating the left compound from `||` is not consumed as a descendant combinator.
+PAT_COLUMN_COMBINE = fr'{WSC}*+\|\|{WSC}*+'
 
 # Regular expressions
 # CSS escape pattern
@@ -235,6 +246,8 @@ QUOTED = ("'", '"')
 COMMA_COMBINATOR = ','
 # Relation token for descendant
 WS_COMBINATOR = " "
+# Relation token for the CSS column combinator (`||`)
+COLUMN_COMBINATOR = "||"
 
 # Parse flags
 FLG_PSEUDO = 0x01
@@ -801,6 +814,7 @@ class CSSParser:
                 ),
                 ("pseudo_nth_child", (':nth-child', ':nth-last-child'), PAT_PSEUDO_NTH_CHILD, SelectorPattern),
                 ("pseudo_nth_type", (':nth-of-type', ':nth-last-of-type'), PAT_PSEUDO_NTH_TYPE, SelectorPattern),
+                ("pseudo_nth_col", (':nth-col', ':nth-last-col'), PAT_PSEUDO_NTH_COL, SelectorPattern),
                 ("pseudo_lang", (':lang',), PAT_PSEUDO_LANG, SelectorPattern),
                 ("pseudo_dir", (':dir',), PAT_PSEUDO_DIR, SelectorPattern)
             )
@@ -814,6 +828,7 @@ class CSSParser:
         SelectorPattern("class", PAT_CLASS),
         SelectorPattern("tag", PAT_TAG),
         SelectorPattern("attribute", PAT_ATTR),
+        SelectorPattern("column_combine", PAT_COLUMN_COMBINE),
         SelectorPatternCombinator("combine", PAT_COMBINE)
     )
 
@@ -1009,25 +1024,25 @@ class CSSParser:
                 self.increment_count(pseudo_selector.count)
                 sel.selectors.append(pseudo_selector)
             elif pseudo == ':first-child':
-                sel.nth.append(ct.SelectorNth(0, False, 1, False, False, ct.SelectorList()))
+                sel.nth.append(ct.SelectorNth(0, False, 1, False, False, ct.SelectorList(), False))
             elif pseudo == ':last-child':
-                sel.nth.append(ct.SelectorNth(0, False, 1, False, True, ct.SelectorList()))
+                sel.nth.append(ct.SelectorNth(0, False, 1, False, True, ct.SelectorList(), False))
             elif pseudo == ':first-of-type':
-                sel.nth.append(ct.SelectorNth(0, False, 1, True, False, ct.SelectorList()))
+                sel.nth.append(ct.SelectorNth(0, False, 1, True, False, ct.SelectorList(), False))
             elif pseudo == ':last-of-type':
-                sel.nth.append(ct.SelectorNth(0, False, 1, True, True, ct.SelectorList()))
+                sel.nth.append(ct.SelectorNth(0, False, 1, True, True, ct.SelectorList(), False))
             elif pseudo == ':only-child':
                 sel.nth.extend(
                     [
-                        ct.SelectorNth(0, False, 1, False, False, ct.SelectorList()),
-                        ct.SelectorNth(0, False, 1, False, True, ct.SelectorList())
+                        ct.SelectorNth(0, False, 1, False, False, ct.SelectorList(), False),
+                        ct.SelectorNth(0, False, 1, False, True, ct.SelectorList(), False)
                     ]
                 )
             elif pseudo == ':only-of-type':
                 sel.nth.extend(
                     [
-                        ct.SelectorNth(0, False, 1, True, False, ct.SelectorList()),
-                        ct.SelectorNth(0, False, 1, True, True, ct.SelectorList())
+                        ct.SelectorNth(0, False, 1, True, False, ct.SelectorList(), False),
+                        ct.SelectorNth(0, False, 1, True, True, ct.SelectorList(), False)
                     ]
                 )
             has_selector = True
@@ -1111,7 +1126,7 @@ class CSSParser:
             def append_nth(nth_sel: ct.SelectorList) -> None:
                 """Append to this selector's `nth` attribute."""
 
-                sel.nth.append(ct.SelectorNth(s1, var, s2, False, last, nth_sel))
+                sel.nth.append(ct.SelectorNth(s1, var, s2, False, last, nth_sel, False))
 
             if m.group('of'):
                 # Parse the rest of `of S`.
@@ -1123,11 +1138,57 @@ class CSSParser:
                 append_nth(nth_sel)
         else:
             if pseudo_sel == ':nth-of-type':
-                sel.nth.append(ct.SelectorNth(s1, var, s2, True, False, ct.SelectorList()))
+                sel.nth.append(ct.SelectorNth(s1, var, s2, True, False, ct.SelectorList(), False))
             elif pseudo_sel == ':nth-last-of-type':
-                sel.nth.append(ct.SelectorNth(s1, var, s2, True, True, ct.SelectorList()))
+                sel.nth.append(ct.SelectorNth(s1, var, s2, True, True, ct.SelectorList(), False))
         has_selector = True
         return has_selector, context
+
+    def parse_pseudo_nth_col(
+        self,
+        sel: _Selector,
+        m: Match[str],
+        has_selector: bool
+    ) -> tuple[bool, _SelectorContext | None]:
+        """Parse the `:nth-col()` and `:nth-last-col()` pseudo-classes."""
+
+        pseudo = util.lower(css_unescape(m.group('name')))
+        s1, var, s2 = self.parse_nth_formula(m.group('nth_col'))
+
+        last = pseudo == ':nth-last-col'
+        sel.nth.append(ct.SelectorNth(s1, var, s2, False, last, ct.SelectorList(), True))
+        has_selector = True
+        return has_selector, None
+
+    @staticmethod
+    def parse_nth_formula(content: str) -> tuple[int, bool, int]:
+        """Parse an `An+B`, `even`, or `odd` formula into the `(a, has_n, b)` components."""
+
+        content = util.lower(content)
+        if content == 'even':
+            return 2, True, 0
+        if content == 'odd':
+            return 2, True, 1
+
+        nth_parts = cast(Match[str], RE_NTH.match(content))
+        _s1 = '-' if nth_parts.group('s1') and nth_parts.group('s1') == '-' else ''
+        _s2 = ''
+        a = nth_parts.group('a')
+        var = a.endswith('n')
+        if a.startswith('n'):
+            _s1 += '1'
+        elif var:
+            _s1 += a[:-1]
+        else:
+            _s2 = _s1 + a
+            _s1 = ''
+        if nth_parts.group('s2') and nth_parts.group('s2') == '-':
+            _s2 = '-'
+        if nth_parts.group('b'):
+            _s2 += nth_parts.group('b')
+        s1 = int(_s1, 10) if _s1 else 0
+        s2 = int(_s2, 10) if _s2 else 0
+        return s1, var, s2
 
     def parse_pseudo_open(
         self,
@@ -1269,6 +1330,58 @@ class CSSParser:
 
         return has_selector, sel
 
+    def parse_column_combinator(
+        self,
+        sel: _Selector,
+        m: Match[str],
+        has_selector: bool,
+        selectors: list[_Selector],
+        relations: list[_Selector],
+        index: int
+    ) -> tuple[bool, _Selector]:
+        """Parse the column combinator `||`."""
+
+        if not has_selector:
+            raise SelectorSyntaxError(
+                f"The combinator '{COLUMN_COMBINATOR}' at position {index}, must have a selector before it",
+                self.pattern,
+                m.start(0)
+            )
+
+        sel.relations.extend(relations)
+        sel.rel_type = COLUMN_COMBINATOR
+        del relations[:]
+        relations.append(sel)
+
+        sel = _Selector()
+        has_selector = False
+        return has_selector, sel
+
+    def parse_has_column_combinator(
+        self,
+        sel: _Selector,
+        m: Match[str],
+        has_selector: bool,
+        selectors: list[_Selector],
+        rel_type: str,
+        index: int
+    ) -> tuple[bool, _Selector, str]:
+        """Parse the column combinator `||` within a relative selector list such as `:has()`."""
+
+        if not has_selector:
+            raise SelectorSyntaxError(
+                f"The combinator '{COLUMN_COMBINATOR}' at position {index}, must have a selector before it",
+                self.pattern,
+                m.start(0)
+            )
+
+        sel.rel_type = rel_type
+        selectors[-1].relations.append(sel)
+        rel_type = ':' + COLUMN_COMBINATOR
+        sel = _Selector()
+        has_selector = False
+        return has_selector, sel, rel_type
+
     def parse_class_id(self, sel: _Selector, m: Match[str], has_selector: bool) -> bool:
         """Parse HTML classes and ids."""
 
@@ -1370,6 +1483,8 @@ class CSSParser:
                 raise NotImplementedError(f"Pseudo-element found at position {m.start(0)}")
             elif key == 'pseudo_contains':
                 ctx.has_selector = self.parse_pseudo_contains(ctx.sel, m, ctx.has_selector)
+            elif key == 'pseudo_nth_col':
+                ctx.has_selector, child = self.parse_pseudo_nth_col(ctx.sel, m, ctx.has_selector)
             elif key in ('pseudo_nth_type', 'pseudo_nth_child'):
                 ctx.has_selector, child = self.parse_pseudo_nth(ctx.sel, m, ctx.has_selector)
             elif key == 'pseudo_lang':
@@ -1407,6 +1522,15 @@ class CSSParser:
                     ctx.has_selector, ctx.sel = self.parse_combinator(
                         ctx.sel, m, ctx.has_selector, ctx.selectors, ctx.relations,
                         ctx.is_pseudo, ctx.is_forgive, ctx.index
+                    )
+            elif key == 'column_combine':
+                if ctx.is_relative:
+                    ctx.has_selector, ctx.sel, ctx.rel_type = self.parse_has_column_combinator(
+                        ctx.sel, m, ctx.has_selector, ctx.selectors, ctx.rel_type, ctx.index
+                    )
+                else:
+                    ctx.has_selector, ctx.sel = self.parse_column_combinator(
+                        ctx.sel, m, ctx.has_selector, ctx.selectors, ctx.relations, ctx.index
                     )
             elif key == 'attribute':
                 ctx.has_selector = self.parse_attribute_selector(ctx.sel, m, ctx.has_selector)

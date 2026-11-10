@@ -168,6 +168,41 @@ soup.select('h1 + p')
 > [!tip] Additional Reading
 > https://developer.mozilla.org/en-US/docs/Web/CSS/Adjacent_sibling_combinator
 
+## Column Combinator
+
+The column combinator (`#!css ||`) relates a table cell (`#!html <td>` or `#!html <th>`) to a `#!html <col>` element
+that declares one of its logical columns, or to another cell that covers one of the same logical columns. Logical
+columns are calculated from the `#!html <col>` / `#!html <colgroup>` declarations and the `colspan` / `rowspan`
+grid, so positions are never guessed with `:nth-child()`. A cell spanning several columns matches when any covered
+column participates in the relation. Each table, including nested tables, keeps its own independent column grid, and
+the parsed document tree is left unchanged.
+
+/// tab | Syntax
+```css
+col || cell
+cell || cell
+```
+///
+
+/// tab | Usage
+```py play
+from bs4 import BeautifulSoup as bs
+html = """
+<table>
+<colgroup><col id="name"><col id="price"></colgroup>
+<tr><td id="0">Widget</td><td id="1" class="price">100</td></tr>
+<tr><td id="2">Gadget</td><td id="3" class="price">200</td></tr>
+</table>
+"""
+soup = bs(html, 'html.parser')
+soup.select('col#price || td')          # ['1', '3']
+soup.select('td.price || td')           # the cells sharing the price column
+```
+///
+
+> [!tip] Additional Reading
+> https://developer.mozilla.org/en-US/docs/Web/CSS/Column_combinator
+
 --8<--
 selector_styles.md
 --8<--

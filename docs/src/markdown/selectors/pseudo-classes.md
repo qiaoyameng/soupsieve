@@ -1255,6 +1255,49 @@ soup.select('p:nth-of-type(-n+3)')
 > [!tip] Additional Reading
 > https://developer.mozilla.org/en-US/docs/Web/CSS/:nth-of-type
 
+## `#!css :nth-col()` / `#!css :nth-last-col()` {:#:nth-col}
+
+`#!css :nth-col()` and `#!css :nth-last-col()` match table cells (`#!html <td>` and `#!html <th>`) based on the
+logical columns they cover. Logical columns are derived from the table's `#!html <col>` / `#!html <colgroup>`
+declarations and the `colspan` / `rowspan` grid, so a cell that spans several columns matches when any of its covered
+columns satisfies the formula. `#!css :nth-last-col()` counts columns from the last logical column. Nested tables are
+evaluated independently, and the document tree is never modified.
+
+-   The keywords `even` and `odd` select cells that cover an even or odd numbered column.
+-   Patterns in the form `an+b` are evaluated against each covered column for every positive integer or zero value of
+    `n`. The first column is `1`. A cell matches as soon as one of its covered columns satisfies the formula.
+-   Invalid `colspan` or `rowspan` values are normalized according to the HTML specification, and `rowspan="0"` spans
+    the remainder of the cell's row group.
+
+/// tab | Syntax
+```css
+td:nth-col(even)
+td:nth-col(odd)
+td:nth-col(2)
+td:nth-col(2n+1)
+td:nth-last-col(-n+2)
+```
+///
+
+/// tab | Usage
+```py play
+from bs4 import BeautifulSoup as bs
+html = """
+<table>
+<tr><td id="0" rowspan="2">A</td><td id="1">B</td><td id="2">C</td></tr>
+<tr><td id="3" colspan="2">D</td></tr>
+</table>
+"""
+soup = bs(html, 'html.parser')
+soup.select('td:nth-col(1)')       # ['0']
+soup.select('td:nth-col(2)')       # ['1', '3']
+soup.select('td:nth-last-col(1)')  # ['2', '3']
+```
+///
+
+> [!tip] Additional Reading
+> https://developer.mozilla.org/en-US/docs/Web/CSS/:nth-col
+
 ## `#!css :open`:material-language-html5:{: title="HTML" data-md-color-primary="orange" .icon}:material-flask:{: title="Experimental" data-md-color-primary="purple" .icon} {:#:open}
 
 Selects an element that has open and closed states, but only when it is in the open state.
