@@ -2167,6 +2167,32 @@ class SoupSieve(ct.Immutable):
 
         yield from CSSMatch(self.selectors, tag, self.namespaces, self.flags).select(limit)
 
+    def to_json(self, *, indent: int | None = None) -> str:
+        """
+        Export the compiled selector graph as a versioned JSON document.
+
+        The document stores the actual compiled selector graph, namespaces, expanded custom
+        selectors and match flags, so it can be loaded by another process without recompiling
+        the original CSS text.
+        """
+
+        from . import css_graph as cg
+
+        return cg.graph_to_json(self, indent=indent)
+
+    @classmethod
+    def from_json(cls, document: str | bytes) -> SoupSieve:
+        """
+        Load a compiled selector from a versioned JSON document.
+
+        The document is fully validated before any selector node is constructed, and no
+        arbitrary Python classes are imported and no CSS is recompiled.
+        """
+
+        from . import css_graph as cg
+
+        return cg.graph_from_json(document)
+
     def __repr__(self) -> str:  # pragma: no cover
         """Representation."""
 
